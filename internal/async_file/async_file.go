@@ -1,25 +1,36 @@
-package internal
+package async_file
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+	"zn_log/internal"
 )
 
 // FileLogger 往文件里面写日志相关代码
 type FileLogger struct {
-	level       LogLevel
+	level       internal.LogLevel
 	filePath    string // 日志文件保存路径
 	fileName    string // 日志文件名
 	maxFileSize int64  // 最大的文件大小
 	fileObj     *os.File
 	errFileObj  *os.File
+	logChan     chan *logMsg
+}
+
+type logMsg struct {
+	Level     internal.LogLevel
+	msg       string
+	funcName  string
+	line      int
+	fileName  string
+	timestamp string // 时间戳
 }
 
 // NewFileLogger ...
 func NewFileLogger(levelStr, fp, fn string, maxSize int64) *FileLogger {
-	logLevel, err := ParseLogLevel(levelStr)
+	logLevel, err := internal.ParseLogLevel(levelStr)
 	if err != nil {
 		panic(err)
 	}
@@ -29,6 +40,7 @@ func NewFileLogger(levelStr, fp, fn string, maxSize int64) *FileLogger {
 		filePath:    fp,
 		fileName:    fn,
 		maxFileSize: maxSize,
+		logChan:     make(chan *logMsg, 50000), // 容量大小五万的日志通道
 	}
 
 	err = fl.initFile() // 打开文件,获取文件对象
@@ -54,19 +66,18 @@ func (f *FileLogger) initFile() error {
 	}
 	f.fileObj = fileObj
 	f.errFileObj = errFileObj
+	// 开启后台goroutine写日志
+	go f.writeLogBackground()
 	return nil
 }
 
-func (f *FileLogger) enable(logLevel LogLevel) bool {
+func (f *FileLogger) enable(logLevel internal.LogLevel) bool {
 	return f.level <= logLevel
 }
 
-func (f *FileLogger) log(lv LogLevel, format string, args ...interface{}) {
-	if f.enable(lv) {
-		msg := fmt.Sprintf(format, args...)      // 合并输出
-		funcName, fileName, lineNo := GetInfo(3) // 三层调用
-		now := time.Now().Format("2006-01-02 03:04:06")
-		lvStr := GetLogString(lv)
+func (f *FileLogger) writeLogBackground() {
+
+	for {
 		if f.checkSize(f.fileObj) {
 			newFile, err := f.splitFile(f.fileObj)
 			if err != nil {
@@ -74,49 +85,83 @@ func (f *FileLogger) log(lv LogLevel, format string, args ...interface{}) {
 			}
 			f.fileObj = newFile
 		}
-		fmt.Fprintf(f.fileObj, "[%s] [%s] [%s:%s:%d] %s \n", now, lvStr, fileName, funcName, lineNo, msg)
-		if lv >= ERROR {
-			if f.checkSize(f.errFileObj) {
-				newFile, err := f.splitFile(f.errFileObj)
-				if err != nil {
-					return
+
+		select {
+		case logTmp := <-f.logChan:
+			logInfo := fmt.Sprintf("[%s] [%s] [%s:%s:%d] %s \n", logTmp.timestamp, internal.GetLogString(logTmp.Level), logTmp.fileName, logTmp.funcName, logTmp.line, logTmp.msg)
+
+			fmt.Fprintf(f.fileObj, logInfo)
+			if logTmp.Level >= internal.ERROR {
+				if f.checkSize(f.errFileObj) {
+					newFile, err := f.splitFile(f.errFileObj)
+					if err != nil {
+						return
+					}
+					f.errFileObj = newFile
 				}
-				f.errFileObj = newFile
+				// 如果记录日志级别大于或等于ERROR，则再记录一份到LogErr的文件中
+				fmt.Fprintf(f.fileObj, logInfo)
 			}
-			// 如果记录日志级别大于或等于ERROR，则再记录一份到LogErr的文件中
-			fmt.Fprintf(f.errFileObj, "[%s] [%s] [%s:%s:%d] %s \n", now, lvStr, fileName, funcName, lineNo, msg)
+		default:
+			// 等五百毫秒
+			time.Sleep(time.Millisecond * 500)
 		}
+
+	}
+}
+
+func (f *FileLogger) log(lv internal.LogLevel, format string, args ...interface{}) {
+	if f.enable(lv) {
+		msg := fmt.Sprintf(format, args...)               // 合并输出
+		funcName, fileName, lineNo := internal.GetInfo(3) // 三层调用
+		now := time.Now().Format("2006-01-02 03:04:06")
+		// 日志发送到通道中
+		logTmp := &logMsg{
+			Level:     lv,
+			msg:       msg,
+			funcName:  funcName,
+			fileName:  fileName,
+			timestamp: now,
+			line:      lineNo,
+		}
+		select {
+		case f.logChan <- logTmp:
+			// 信息,写入通道
+		default:
+			// 如果写满了通道就不写了,丢掉写不进去的日志
+		}
+
 	}
 }
 
 // Debug ...
 func (f *FileLogger) Debug(format string, args ...interface{}) {
-	f.log(DEBUG, format, args...)
+	f.log(internal.DEBUG, format, args...)
 }
 
 // Trace ...
 func (f *FileLogger) Trace(format string, args ...interface{}) {
-	f.log(TRACE, format, args...)
+	f.log(internal.TRACE, format, args...)
 }
 
 // Info ...
 func (f *FileLogger) Info(format string, args ...interface{}) {
-	f.log(INFO, format, args...)
+	f.log(internal.INFO, format, args...)
 }
 
 // Warning ...
 func (f *FileLogger) Warning(format string, args ...interface{}) {
-	f.log(WARNING, format, args...)
+	f.log(internal.WARNING, format, args...)
 }
 
 // Error ...
 func (f *FileLogger) Error(format string, args ...interface{}) {
-	f.log(ERROR, format, args...)
+	f.log(internal.ERROR, format, args...)
 }
 
 // Fatal ...
 func (f *FileLogger) Fatal(format string, args ...interface{}) {
-	f.log(FATAL, format, args...)
+	f.log(internal.FATAL, format, args...)
 }
 
 // Close 关闭文件资源
@@ -159,4 +204,3 @@ func (f *FileLogger) splitFile(file *os.File) (*os.File, error) {
 	// 4. 将打开的文件赋值给 fl.FileObj
 	return fileObj, nil
 }
-

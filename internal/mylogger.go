@@ -32,7 +32,7 @@ const (
 	FATAL
 )
 
-func parseLogLevel(s string) (LogLevel, error) {
+func ParseLogLevel(s string) (LogLevel, error) {
 	s = strings.ToLower(s)
 	switch s {
 	case "debug":
@@ -54,7 +54,7 @@ func parseLogLevel(s string) (LogLevel, error) {
 
 }
 
-func getLogString(lv LogLevel) string {
+func GetLogString(lv LogLevel) string {
 
 	switch lv {
 	case DEBUG:
@@ -74,7 +74,7 @@ func getLogString(lv LogLevel) string {
 	}
 }
 
-func getInfo(skip int) (funcName, fileName string, lineNo int) {
+func GetInfo(skip int) (funcName, fileName string, lineNo int) {
 	pc, file, line, ok := runtime.Caller(skip)
 	if !ok {
 		fmt.Printf("runtime.Caller() failed\n")

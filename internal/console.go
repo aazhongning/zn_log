@@ -14,7 +14,7 @@ type ConsoleLogger struct {
 
 // NewConsoleLogger 构造函数 ...
 func NewConsoleLogger(levelStr string) ConsoleLogger {
-	level, err := parseLogLevel(levelStr)
+	level, err := ParseLogLevel(levelStr)
 	if err != nil {
 		panic(err)
 	}
@@ -30,9 +30,9 @@ func (c ConsoleLogger) enable(logLevel LogLevel) bool {
 func (c ConsoleLogger) log(lv LogLevel, format string, args ...interface{}) {
 	if c.enable(lv) {
 		msg := fmt.Sprintf(format, args...)      // 合并输出
-		funcName, fileName, lineNo := getInfo(3) // 三层调用
+		funcName, fileName, lineNo := GetInfo(3) // 三层调用
 		now := time.Now().Format("2006-01-02 03:04:06")
-		lvStr := getLogString(lv)
+		lvStr := GetLogString(lv)
 		fmt.Printf("[%s] [%s] [%s:%s:%d] %s \n", now, lvStr, fileName, funcName, lineNo, msg)
 	}
 }
